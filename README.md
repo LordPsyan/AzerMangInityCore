@@ -1,2 +1,3 @@
 # AzerMangInityCore
 a master cluster headache fuck of merging all cores.
+Oh, and time consuming AF...
