@@ -1,2 +1,2 @@
 # AzerMangInityCore
-a clusterfuck of all cores into one.
+a master cluster headache fuck of merging all cores.
