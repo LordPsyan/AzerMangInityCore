@@ -9,6 +9,7 @@ extern void AddSC_battleground();
 
 // custom
 extern void AddSC_LearnAllSpells();
+extern void AddSC_announce_login();
 
 // examples
 extern void AddSC_example_creature();
@@ -368,6 +369,7 @@ void AddScripts()
 
     // custom
     AddSC_LearnAllSpells();
+    AddSC_announce_login();
 
     // examples
     AddSC_example_creature();

@@ -2534,13 +2534,13 @@ enum Expansions
 enum MaxLevel
 {
     MAX_LEVEL_CLASSIC                   = 60,
-    MAX_LEVEL_TBC                       = 70,
+    MAX_LEVEL_TBC                       = 100,
 };
 
 static const MaxLevel maxLevelForExpansion[MAX_EXPANSION + 1] = { MAX_LEVEL_CLASSIC, MAX_LEVEL_TBC };
 
 // Max creature level (included some bosses and elite)
-#define DEFAULT_MAX_CREATURE_LEVEL 75
+#define DEFAULT_MAX_CREATURE_LEVEL 255
 
 enum TeleportLocation
 {
