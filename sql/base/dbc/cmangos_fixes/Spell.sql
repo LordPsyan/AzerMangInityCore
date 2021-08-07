@@ -1850,6 +1850,11 @@ INSERT INTO `spell_template` (`Id`, `Category`, `Dispel`, `Mechanic`, `Attribute
 -- Fix duration of spell 28561 (Summon Blizzard): NPC should despawn after 30 seconds, not 5 minutes
 UPDATE spell_template SET DurationIndex=9 WHERE id=28561;
 
+-- Add SPELL_ATTR_EX3_DEATH_PERSISTENT to several non-passive spells which are triggered by items on equip
+UPDATE spell_template SET AttributesEx3=AttributesEx3|0x00100000 WHERE Id IN(
+'7363','16611','19307','17619','21079','22618','22620','23930','22988','23101','24198','28142','28143','28144','28145','28347','29112','29113',
+'29162','37649','38438','38448','42156','43944','42275','52172','50200');
+
 -- ============================================================
 -- Classic section
 -- ============================================================
@@ -2129,6 +2134,9 @@ VALUES
 
 -- Added Ignore LoS attribute for Web Wrab spells used in Maexxna encounter (trigger NPC is sometimes behind spider web GOs that break LoS with player)
 UPDATE `spell_template` SET `AttributesEx2`=AttributesEx2|0x00000004 WHERE `id` BETWEEN 28617 AND 28621;
+
+-- Lord Kazzak 12397 - boss_kazzak - Remove SPELL_INTERRUPT_FLAG_ABORT_ON_DMG for Void Bolt 21066
+UPDATE `spell_template` SET `InterruptFlags` = `InterruptFlags`&~0x00000010  WHERE `Id` = 21066;
 
 -- ============================================================
 -- TBC section

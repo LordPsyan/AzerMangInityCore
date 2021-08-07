@@ -394,9 +394,6 @@ Aura::Aura(SpellEntry const* spellproto, SpellEffectIndex eff, int32 const* curr
                 if (castItem)
                     damage += (damage * castItem->GetEnchantmentModifier() / 100);
                 break;
-            case 34501: // Expose Weakness
-                damage = (caster->GetStat(STAT_AGILITY) * damage) / 100;
-                break;
             default:
                 damage = OnAuraValueCalculate(caster, damage);
                 break;
@@ -2017,8 +2014,6 @@ void Aura::TriggerSpell()
                     caster->CastSpell(triggerTarget, trigger_spell_id, TRIGGERED_OLD_TRIGGERED, nullptr, this);
                 return;
             }
-            case 28059:                                     // Positive Charge
-            case 28084:                                     // Negative Charge
             case 39088:                                     // Positive Charge
             case 39091:                                     // Negative Charge
             {
@@ -2026,14 +2021,6 @@ void Aura::TriggerSpell()
                 float range;
                 switch (auraId)
                 {
-                    case 28059:
-                        buffAuraId = 29659;
-                        range = 13.f;
-                        break;
-                    case 28084:
-                        buffAuraId = 29660;
-                        range = 13.f;
-                        break;
                     case 39088:
                         buffAuraId = 39089;
                         range = 10.f;
@@ -2690,24 +2677,6 @@ void Aura::HandleAuraDummy(bool apply, bool Real)
                         caster->CastSpell(target, 27285, TRIGGERED_OLD_TRIGGERED);
                 return;
             }
-            case 28169:                                     // Mutating Injection
-            {
-                if (m_removeMode == AURA_REMOVE_BY_EXPIRE)
-                    // Embalming Cloud
-                    target->CastSpell(target, 28322, TRIGGERED_OLD_TRIGGERED, nullptr, this);
-                else // Removed by dispell
-                    // Mutagen Explosion
-                    target->CastSpell(target, 28206, TRIGGERED_OLD_TRIGGERED, nullptr, this);
-                // Poison Cloud
-                target->CastSpell(target, 28240, TRIGGERED_OLD_TRIGGERED, nullptr, this);
-                return;
-            }
-            case 28059:                                     // Positive Charge
-                target->RemoveAurasDueToSpell(29659);
-                return;
-            case 28084:                                     // Negative Charge
-                target->RemoveAurasDueToSpell(29660);
-                return;
             case 29104:                                     // Anub'Rekhan Aura
             {
                 if (m_removeMode == AURA_REMOVE_BY_DEATH && target->GetTypeId() == TYPEID_PLAYER)
@@ -3237,9 +3206,37 @@ void Aura::HandleAuraDummy(bool apply, bool Real)
         {
             uint32 zone, area;
             target->GetZoneAndAreaId(zone, area);
+            std::set<uint32> appliedSpells;
+            std::set<uint32> removedSpells;
 
+            Player* player = static_cast<Player*>(target);
+
+            // custom loop for evaluation reasons
             for (SpellAreaForAreaMap::const_iterator itr = saBounds.first; itr != saBounds.second; ++itr)
-                itr->second->ApplyOrRemoveSpellIfCan((Player*)target, zone, area, false);
+            {
+                auto data = (*itr).second;
+                uint32 spellId = data->spellId;
+                // one success trumps multiple failures
+                if (appliedSpells.find(spellId) != appliedSpells.end())
+                    continue;
+
+                if (data->IsFitToRequirements(player, zone, area))
+                {
+                    if (data->autocast && !player->HasAura(spellId))
+                    {
+                        appliedSpells.insert(spellId);
+                        removedSpells.erase(spellId);
+                    }
+                }
+                else if (player->HasAura(spellId))
+                    removedSpells.insert(spellId);
+            }
+
+            for (auto spellId : appliedSpells)
+                player->CastSpell(player, spellId, TRIGGERED_OLD_TRIGGERED);
+
+            for (auto spellId : removedSpells)
+                player->RemoveAurasDueToSpell(spellId);
         }
     }
 
@@ -3814,11 +3811,6 @@ void Aura::HandleForceReaction(bool apply, bool Real)
     // stop fighting if at apply forced rank friendly or at remove real rank friendly
     if ((apply && faction_rank >= REP_FRIENDLY) || (!apply && player->GetReputationRank(faction_id) >= REP_FRIENDLY))
         player->StopAttackFaction(faction_id);
-
-    //TODO: hack alert! Need to remove that when its possible
-    if (!apply)
-        if (GetId() == 32756) // Shadowy disguise
-            player->RemoveAurasDueToSpell(player->getGender() == GENDER_MALE ? 38080 : 38081);
 }
 
 void Aura::HandleAuraModSkill(bool apply, bool /*Real*/)
@@ -4382,10 +4374,6 @@ void Aura::HandleModStealth(bool apply, bool Real)
                 target->SetVisibility(VISIBILITY_GROUP_STEALTH);
             }
 
-            // for RACE_NIGHTELF stealth
-            if (target->GetTypeId() == TYPEID_PLAYER && GetId() == 20580)
-                target->CastSpell(target, 21009, TRIGGERED_OLD_TRIGGERED, nullptr, this);
-
             // apply full stealth period bonuses only at first stealth aura in stack
             if (target->GetAurasByType(SPELL_AURA_MOD_STEALTH).size() <= 1)
             {
@@ -4406,10 +4394,6 @@ void Aura::HandleModStealth(bool apply, bool Real)
     }
     else
     {
-        // for RACE_NIGHTELF stealth
-        if (Real && target->GetTypeId() == TYPEID_PLAYER && GetId() == 20580)
-            target->RemoveAurasDueToSpell(21009);
-
         // only at real aura remove of _last_ SPELL_AURA_MOD_STEALTH
         if (Real && !target->HasAuraType(SPELL_AURA_MOD_STEALTH))
         {
@@ -4443,9 +4427,6 @@ void Aura::HandleModStealth(bool apply, bool Real)
                 }
             }
         }
-
-        if (GetId() == 29448) // Moroes Vanish
-            target->AI()->SendAIEvent(AI_EVENT_CUSTOM_A, target, target);
     }
 }
 
@@ -4505,30 +4486,6 @@ void Aura::HandleInvisibility(bool apply, bool Real)
 
     if (target->IsInWorld())
         target->UpdateVisibilityAndView();
-
-    if (!apply)
-    {
-        switch (GetId())
-        {
-            case 38544:
-            {
-                if (target->GetTypeId() != TYPEID_PLAYER)
-                    break;
-
-                Player* pPlayer = (Player*)target;
-
-                if (pPlayer->GetMover() != target)
-                {
-                    if (Creature* mover = (Creature*)pPlayer->GetMover()) // this spell uses DoSummonPossesed so remove this on removal
-                    {
-                        pPlayer->BreakCharmOutgoing();
-                        mover->ForcedDespawn();
-                    }
-                }
-            }
-            break;
-        }
-    }
 }
 
 void Aura::HandleInvisibilityDetect(bool apply, bool Real)
@@ -4603,10 +4560,6 @@ void Aura::HandleAuraModRoot(bool apply, bool Real)
     }
 
     target->SetImmobilizedState(apply);
-
-    if (!apply)
-        if (GetSpellProto()->Id == 41476) // Vanish - Veras Darkshadow
-            target->CastSpell(nullptr, 41479, TRIGGERED_NONE);
 }
 
 void Aura::HandleAuraModSilence(bool apply, bool Real)
@@ -5136,7 +5089,9 @@ void Aura::HandlePeriodicTriggerSpell(bool apply, bool /*Real*/)
                 target->CastSpell(nullptr, 39831, TRIGGERED_NONE);
                 target->CastSpell(nullptr, 39832, TRIGGERED_NONE);
                 break;
-            case 41194:                                     // Whirlwind
+            case 41194:                                     // Whirlwind - Bonechewer Blade Fury 23235
+            case 41399:                                     // Whirlwind - Image of Dementia 23436
+            case 46270:                                     // Whirlwind - Priestess of Torment 25509
                 if (Unit* caster = GetCaster())
                 {
                     ThreatList const& threatList = caster->getThreatManager().getThreatList();
@@ -5708,9 +5663,6 @@ void Aura::HandleAuraModDispelResist(bool apply, bool Real)
 {
     if (!Real || !apply)
         return;
-
-    if (GetId() == 33206)
-        GetTarget()->CastSpell(GetTarget(), 44416, TRIGGERED_OLD_TRIGGERED, nullptr, this, GetCasterGuid());
 }
 
 void Aura::HandleModSpellDamagePercentFromAttackPower(bool /*apply*/, bool /*Real*/)
@@ -5917,19 +5869,17 @@ void Aura::HandleAuraModIncreaseHealth(bool apply, bool Real)
         // Special case with temporary increase max/current health
         // Cases where we need to manually calculate the amount for the spell (by percentage)
         // recalculate to full amount at apply for proper remove
-        // Backport notive TBC: no cases yet
-        // no break here
 
         // Cases where m_amount already has the correct value (spells cast with CastCustomSpell or absolute values)
         case 12976:                                         // Warrior Last Stand triggered spell (Cast with percentage-value by CastCustomSpell)
         case 28726:                                         // Nightmare Seed
-        case 34511:                                         // Valor (Bulwark of Kings, Bulwark of the Ancient Kings)
-        case 40604:                                         // Fel Rage - Gurtogg Bloodboil
+        case 33668:                                         // Tenacity (Regal Protectorate)
+        case 34511:                                         // Valor (Bulwark of Kings, Bulwark of the Ancient Kings
         case 44055:                                         // Tremendous Fortitude (Battlemaster's Alacrity)
         {
             if (Real)
             {
-                if (apply)
+                if (apply) // code confirmed for last stand
                 {
                     target->HandleStatModifier(UNIT_MOD_HEALTH, TOTAL_VALUE, float(m_modifier.m_amount), apply);
                     target->ModifyHealth(m_modifier.m_amount);
@@ -5947,6 +5897,17 @@ void Aura::HandleAuraModIncreaseHealth(bool apply, bool Real)
                     target->HandleStatModifier(UNIT_MOD_HEALTH, TOTAL_VALUE, float(m_modifier.m_amount), apply);
                 }
             }
+            return;
+        }
+        // confirmed to keep percentage on unapply
+        case 40604:                                         // Fel Rage - Gurtogg Bloodboil
+        {
+            float percentage = target->GetHealthPercent();
+            target->HandleStatModifier(UNIT_MOD_HEALTH, TOTAL_VALUE, float(m_modifier.m_amount), apply);
+            if (apply)
+                target->ModifyHealth(m_modifier.m_amount);
+            else
+                target->SetHealthPercent(percentage);
             return;
         }
         case 30421:

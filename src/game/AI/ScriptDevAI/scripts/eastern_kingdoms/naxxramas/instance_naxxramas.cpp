@@ -570,17 +570,6 @@ void instance_naxxramas::SetData(uint32 type, uint32 data)
             break;
         case TYPE_GLUTH:
             m_auiEncounter[type] = data;
-            if (data == DONE || data == FAIL)
-            {
-                for (auto& zombieGuid : m_zombieChowList)
-                {
-                    if (Creature* zombie = instance->GetCreature(zombieGuid))
-                    {
-                        if (zombie->IsAlive())
-                            zombie->Suicide();
-                    }
-                }
-            }
             if (data == DONE)
             {
                 DoUseDoorOrButton(GO_CONS_GLUT_EXIT_DOOR);
@@ -1034,9 +1023,7 @@ bool instance_naxxramas::DoHandleEvent(uint32 eventId)
                             zombie->AttackStop();
                             zombie->SetTarget(nullptr);
                             zombie->AI()->DoResetThreat();
-                            zombie->GetMotionMaster()->Clear();
-                            zombie->SetWalk(true);
-                            zombie->GetMotionMaster()->MoveFollow(gluth, ATTACK_DISTANCE, 0);
+                            zombie->GetMotionMaster()->MovePoint(0, gluth->GetPositionX(), gluth->GetPositionY(), gluth->GetPositionZ());
                         }
                     }
                 }

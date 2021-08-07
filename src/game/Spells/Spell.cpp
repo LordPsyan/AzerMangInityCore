@@ -5447,6 +5447,16 @@ SpellCastResult Spell::CheckCast(bool strict)
                     return SPELL_FAILED_BAD_TARGETS;
                 break;
             }
+            case SPELL_EFFECT_SUMMON_RAF_FRIEND:
+            {
+                if (m_caster->GetTypeId() != TYPEID_PLAYER)
+                    return SPELL_FAILED_BAD_TARGETS;
+
+                Player* caster = static_cast<Player*>(m_caster);
+                if (!caster->GetSession()->GetRecruitingFriendId())
+                    return SPELL_FAILED_BAD_TARGETS;
+                break;
+            }
             default: break;
         }
     }
@@ -7899,14 +7909,6 @@ bool Spell::OnCheckTarget(Unit* target, SpellEffectIndex eff) const
         case 26457:
         case 26559:
             if (target->GetPowerType() != POWER_MANA)
-                return false;
-            break;
-        case 28062:                                         // Positive Charge
-            if (!target->HasAura(29660))                    // Only deal damage if target has Negative Charge
-                return false;
-            break;
-        case 28085:                                         // Negative Charge
-            if (!target->HasAura(29659))                    // Only deal damage if target has Positive Charge
                 return false;
             break;
         case 29511:

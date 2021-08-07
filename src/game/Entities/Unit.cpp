@@ -683,6 +683,9 @@ void Unit::SendMoveRoot(bool state, bool broadcastOnly)
             m_movementInfo.RemoveMovementFlag(MOVEFLAG_ROOT);
     }
 
+    if (!IsInWorld())
+        return;
+
     const PackedGuid &guid = GetPackGUID();
     // Pre-Wrath spline root: when unit is currently not controlled by a player, or broadcasting to others
     if (!client || broadcastOnly)
@@ -1309,7 +1312,7 @@ void Unit::JustKilledCreature(Unit* killer, Creature* victim, Player* responsibl
     if (killer && victim->GetCreatureType() == CREATURE_TYPE_CRITTER && killer->GetTypeId() == TYPEID_PLAYER)
     {
         if (CreatureInfo const* normalInfo = ObjectMgr::GetCreatureTemplate(victim->GetEntry()))
-            static_cast<Player*>(killer)->KilledMonster(normalInfo, victim->GetObjectGuid());
+            static_cast<Player*>(killer)->KilledMonster(normalInfo, victim);
     }
 
     // Interrupt channeling spell when a Possessed Summoned is killed
@@ -3872,8 +3875,8 @@ float Unit::CalculateEffectiveMissChance(const Unit* victim, WeaponAttackType at
         return 0.0f;
     const bool ranged = (attType == RANGED_ATTACK);
     const bool weapon = (!ability || ability->EquippedItemClass == ITEM_CLASS_WEAPON);
-    // Check if dual wielding, add additional miss penalty
-    if (!ability && !ranged && hasOffhandWeaponForAttack())
+    // Check if dual wielding, add additional miss penalty - when mainhand has on next swing spell, offhand doesnt suffer penalty
+    if (!ability && !ranged && hasOffhandWeaponForAttack() && (!m_currentSpells[CURRENT_MELEE_SPELL] || !IsNextMeleeSwingSpell(m_currentSpells[CURRENT_MELEE_SPELL]->m_spellInfo)))
         chance += 19.0f;
     // Skill difference can be both negative and positive. Positive difference means that:
     // a) Victim's level is higher
@@ -9281,10 +9284,7 @@ bool Unit::IsSuppressedTarget(Unit* target) const
 
 bool Unit::IsOfflineTarget(Unit* victim) const
 {
-    if (IsFeigningDeathSuccessfully())
-        return true;
-
-    if (!CanAttack(victim))
+    if (victim->IsFeigningDeathSuccessfully())
         return true;
 
     return false;
@@ -12371,5 +12371,268 @@ void Unit::OverrideMountDisplayId(uint32 newDisplayId)
         if (mountedAuras.size())
             SetUInt32Value(UNIT_FIELD_MOUNTDISPLAYID, mountedAuras.back()->GetAmount());
         m_overridenMountId = 0;
+    }
+}
+
+bool Unit::MeetsSelectAttackingRequirement(Unit* target, SpellEntry const* spellInfo, uint32 selectFlags, SelectAttackingTargetParams params) const
+{
+    if (selectFlags)
+    {
+        if ((selectFlags & SELECT_FLAG_PLAYER) && target->GetTypeId() != TYPEID_PLAYER)
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_POWER_MANA) && target->GetPowerType() != POWER_MANA)
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_POWER_RAGE) && target->GetPowerType() != POWER_RAGE)
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_POWER_ENERGY) && target->GetPowerType() != POWER_ENERGY)
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_IN_MELEE_RANGE) && !CanReachWithMeleeAttack(target))
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_NOT_IN_MELEE_RANGE) && CanReachWithMeleeAttack(target))
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_IN_LOS) && !IsWithinLOSInMap(target, true))
+            return false;
+
+        if (!target->IsAlive())
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_RANGE_RANGE))
+        {
+            float dist = GetDistance(target, true, DIST_CALC_COMBAT_REACH);
+            if (dist > params.range.maxRange || dist < params.range.minRange)
+                return false;
+        }
+
+        if ((selectFlags & SELECT_FLAG_RANGE_AOE_RANGE))
+        {
+            float dist = target->GetDistance(GetPositionX(), GetPositionY(), GetPositionZ(), DIST_CALC_COMBAT_REACH);
+            if (dist > params.range.maxRange || dist < params.range.minRange)
+                return false;
+        }
+
+        if ((selectFlags & SELECT_FLAG_POWER_NOT_MANA) && target->GetPowerType() == POWER_MANA)
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_SKIP_TANK) && target == GetVictim())
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_PLAYER_CASTING) && !target->IsNonMeleeSpellCasted(false))
+            return false;
+
+        if ((selectFlags & SELECT_FLAG_SKIP_CUSTOM) && target->GetObjectGuid() == params.skip.guid)
+            return false;
+    }
+
+    if (spellInfo)
+    {
+        if (selectFlags & (SELECT_FLAG_HAS_AURA | SELECT_FLAG_NOT_AURA))
+        {
+            if (selectFlags & SELECT_FLAG_HAS_AURA)
+            {
+                if (!target->HasAura(spellInfo->Id))
+                    return false;
+            }
+
+            if (selectFlags & SELECT_FLAG_NOT_AURA)
+            {
+                if (target->HasAura(spellInfo->Id))
+                    return false;
+            }
+
+            return true;
+        }
+
+        if (spellInfo->HasAttribute(SPELL_ATTR_EX3_TARGET_ONLY_PLAYER) && target->GetTypeId() != TYPEID_PLAYER)
+            return false;
+
+        switch (spellInfo->rangeIndex)
+        {
+            case SPELL_RANGE_IDX_ANYWHERE:  return true;
+            case SPELL_RANGE_IDX_COMBAT:    return CanReachWithMeleeAttack(target);
+        }
+
+        if (selectFlags & SELECT_FLAG_USE_EFFECT_RADIUS)
+        {
+            SpellRadiusEntry const* srange = sSpellRadiusStore.LookupEntry(spellInfo->EffectRadiusIndex[0]);
+            float max_range = GetSpellRadius(srange);
+            float dist = target->GetDistance(GetPositionX(), GetPositionY(), GetPositionZ(), DIST_CALC_COMBAT_REACH);
+            return dist < max_range;
+        }
+        else
+        {
+            SpellRangeEntry const* srange = sSpellRangeStore.LookupEntry(spellInfo->rangeIndex);
+            float max_range = GetSpellMaxRange(srange);
+            float min_range = GetSpellMinRange(srange);
+            float dist = GetDistance(target, true, DIST_CALC_COMBAT_REACH);
+            return dist < max_range&& dist >= min_range;
+        }
+    }
+
+    return true;
+}
+
+Unit* Unit::SelectAttackingTarget(AttackingTarget target, uint32 position, uint32 spellId, uint32 selectFlags, SelectAttackingTargetParams params /*= SelectAttackingTargetParams()*/) const
+{
+    return SelectAttackingTarget(target, position, sSpellTemplate.LookupEntry<SpellEntry>(spellId), selectFlags, params);
+}
+
+Unit* Unit::SelectAttackingTarget(AttackingTarget target, uint32 position, SpellEntry const* spellInfo /*= nullptr*/, uint32 selectFlags/*= 0*/, SelectAttackingTargetParams params /*= SelectAttackingTargetParams()*/) const
+{
+    if (!CanHaveThreatList())
+        return nullptr;
+
+    ThreatList const& threatlist = getThreatManager().getThreatList();
+    if (threatlist.empty() || position >= threatlist.size())
+        return nullptr;
+
+    ThreatList::const_iterator itr = threatlist.begin();
+
+    switch (target)
+    {
+        case ATTACKING_TARGET_RANDOM:
+        {
+            std::vector<Unit*> suitableUnits;
+            suitableUnits.reserve(threatlist.size() - position);
+
+            if (position)
+                advance(itr, position);
+
+            for (; itr != threatlist.end(); ++itr)
+            {
+                if (Unit* pTarget = GetMap()->GetUnit((*itr)->getUnitGuid()))
+                {
+                    if ((!selectFlags && !spellInfo) || MeetsSelectAttackingRequirement(pTarget, spellInfo, selectFlags, params))
+                        suitableUnits.push_back(pTarget);
+                }
+            }
+
+            if (!suitableUnits.empty())
+                return suitableUnits[urand(0, suitableUnits.size() - 1)];
+
+            break;
+        }
+        case ATTACKING_TARGET_TOPAGGRO:
+        {
+            if (position)
+                advance(itr, position);
+
+            for (; itr != threatlist.end(); ++itr)
+            {
+                if (Unit* pTarget = GetMap()->GetUnit((*itr)->getUnitGuid()))
+                {
+                    if ((!selectFlags && !spellInfo) || MeetsSelectAttackingRequirement(pTarget, spellInfo, selectFlags, params))
+                        return pTarget;
+                }
+            }
+
+            break;
+        }
+        case ATTACKING_TARGET_BOTTOMAGGRO:
+        {
+            ThreatList::const_reverse_iterator ritr = threatlist.rbegin();
+
+            if (position)
+                advance(ritr, position);
+
+            for (; ritr != threatlist.rend(); ++ritr)
+            {
+                if (Unit* pTarget = GetMap()->GetUnit((*itr)->getUnitGuid()))
+                {
+                    if ((!selectFlags && !spellInfo) || MeetsSelectAttackingRequirement(pTarget, spellInfo, selectFlags, params))
+                        return pTarget;
+                }
+            }
+
+            break;
+        }
+        case ATTACKING_TARGET_NEAREST_BY:
+        case ATTACKING_TARGET_FARTHEST_AWAY:
+        {
+            UnitList suitableUnits;
+
+            for (; itr != threatlist.end(); ++itr)
+            {
+                if (Unit* pTarget = GetMap()->GetUnit((*itr)->getUnitGuid()))
+                {
+                    if ((!selectFlags && !spellInfo) || MeetsSelectAttackingRequirement(pTarget, spellInfo, selectFlags, params))
+                        suitableUnits.push_back(pTarget);
+                }
+            }
+
+            if (suitableUnits.empty() || position >= suitableUnits.size())
+                return nullptr;
+
+            if (suitableUnits.size() > 1)
+            {
+                if (target == ATTACKING_TARGET_NEAREST_BY)
+                    suitableUnits.sort(TargetDistanceOrderNear(this));
+                else
+                    suitableUnits.sort(TargetDistanceOrderFarAway(this));
+            }
+
+            UnitList::iterator itr2 = suitableUnits.begin();
+            if (position)
+                std::advance(itr2, position);
+            return *itr2;
+        }
+        case ATTACKING_TARGET_ALL_SUITABLE:
+            //TODO:: This should not happen
+            sLog.outError("Creature::SelectAttackingTarget> Target have unimplemented value 'ATTACKING_TARGET_ALL_SUITABLE'!");
+            break;
+        default:
+            break;
+    }
+
+    return nullptr;
+}
+
+void Unit::SelectAttackingTargets(std::vector<Unit*>& selectedTargets, AttackingTarget target, uint32 position, uint32 spellId, uint32 selectFlags/*= 0*/, SelectAttackingTargetParams params /*= SelectAttackingTargetParams()*/) const
+{
+    SelectAttackingTargets(selectedTargets, target, position, sSpellTemplate.LookupEntry<SpellEntry>(spellId), selectFlags, params);
+}
+
+void Unit::SelectAttackingTargets(std::vector<Unit*>& selectedTargets, AttackingTarget target, uint32 position, SpellEntry const* spellInfo /*= nullptr*/, uint32 selectFlags/*= 0*/, SelectAttackingTargetParams params /*= SelectAttackingTargetParams()*/) const
+{
+    if (!CanHaveThreatList())
+        return;
+
+    ThreatList const& threatlist = getThreatManager().getThreatList();
+    if (threatlist.empty() || position >= threatlist.size())
+        return;
+
+    ThreatList::const_iterator itr = threatlist.begin();
+
+    switch (target)
+    {
+        case ATTACKING_TARGET_ALL_SUITABLE:
+        {
+            if (position)
+                advance(itr, position);
+
+            for (; itr != threatlist.end(); ++itr)
+            {
+                if (Unit* pTarget = GetMap()->GetUnit((*itr)->getUnitGuid()))
+                {
+                    if ((!selectFlags && !spellInfo) || MeetsSelectAttackingRequirement(pTarget, spellInfo, selectFlags, params))
+                        selectedTargets.push_back(pTarget);
+                }
+            }
+            break;
+        }
+        case ATTACKING_TARGET_RANDOM:
+        case ATTACKING_TARGET_TOPAGGRO:
+        case ATTACKING_TARGET_BOTTOMAGGRO:
+        case ATTACKING_TARGET_NEAREST_BY:
+        case ATTACKING_TARGET_FARTHEST_AWAY:
+        default:
+            //TODO:: This should not happen
+            sLog.outError("Creature::SelectAttackingTarget> Target have unimplemented value!");
+            break;
     }
 }

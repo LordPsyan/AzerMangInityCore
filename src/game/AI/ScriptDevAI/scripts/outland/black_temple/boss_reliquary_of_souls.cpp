@@ -247,6 +247,10 @@ struct boss_reliquary_of_soulsAI : public Scripted_NoMovementAI, public TimerMan
         m_creature->RemoveAurasDueToSpell(SPELL_SUBMERGE_VISUAL);
         ResetTimer(RELIQUARY_ACTION_SUMMON_SOUL, 1000);
         ResetTimer(RELIQUARY_ACTION_SUBMERGE, 41000);
+
+        if (m_instance)
+            if (Creature* trigger = m_instance->GetSingleCreatureFromStorage(NPC_RELIQUARY_COMBAT_TRIGGER))
+                trigger->SetInCombatWithZone();
     }
 
     // Wrapper to count the dead spirits
@@ -274,11 +278,15 @@ struct essence_base_AI : public ScriptedAI, public CombatActions
     essence_base_AI(Creature* creature, uint32 maxActions) : ScriptedAI(creature), CombatActions(maxActions), m_instance(static_cast<ScriptedInstance*>(creature->GetInstanceData()))
     {
         SetDeathPrevention(true);
-        SetReactState(REACT_DEFENSIVE);
+        SetReactState(REACT_PASSIVE);
         m_bIsPhaseFinished = false;
         AddCustomAction(ESSENCE_GENERIC_ACTION_ATTACK, 3500u, [&]()
         {
+            SetReactState(REACT_AGGRESSIVE);
             m_creature->SetInCombatWithZone();
+            AttackClosestEnemy();
+            if (!m_creature->GetVictim())
+                JustReachedHome();
         });
         m_creature->GetCombatManager().SetLeashingCheck([&](Unit*, float x, float y, float z)
             {
@@ -593,11 +601,16 @@ struct boss_essence_of_angerAI : public ScriptedAI, public CombatActions
 {
     boss_essence_of_angerAI(Creature* pCreature) : ScriptedAI(pCreature), CombatActions(ANGER_ACTION_MAX), m_instance(static_cast<ScriptedInstance*>(pCreature->GetInstanceData()))
     {
+        SetReactState(REACT_PASSIVE);
         AddCombatAction(ANGER_ACTION_SOUL_SCREAM, 0u);
         AddCombatAction(ANGER_ACTION_SPITE, 0u);
         AddCustomAction(ESSENCE_GENERIC_ACTION_ATTACK, 3500u, [&]()
         {
+            SetReactState(REACT_AGGRESSIVE);
             m_creature->SetInCombatWithZone();
+            AttackClosestEnemy();
+            if (!m_creature->GetVictim())
+                JustReachedHome();
         });
     }
 

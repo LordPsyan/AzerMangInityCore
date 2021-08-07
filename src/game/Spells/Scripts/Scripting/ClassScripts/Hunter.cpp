@@ -115,9 +115,21 @@ struct Misdirection : public SpellScript
     }
 };
 
+struct ExposeWeakness : public AuraScript
+{
+    int32 OnAuraValueCalculate(AuraCalcData& data, int32 value) const override
+    {
+        if (data.caster)
+            value = (data.caster->GetStat(STAT_AGILITY) * value) / 100;
+
+        return value;
+    }
+};
+
 void LoadHunterScripts()
 {
     RegisterAuraScript<HuntersMark>("spell_hunters_mark");
     RegisterSpellScript<KillCommand>("spell_kill_command");
     RegisterSpellScript<Misdirection>("spell_misdirection");
+    RegisterAuraScript<ExposeWeakness>("spell_expose_weakness");
 }

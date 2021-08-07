@@ -27,8 +27,8 @@ EndScriptData */
 #include "AI/ScriptDevAI/base/escort_ai.h"
 
 // #define FAST_TIMERS
-//#define NO_SHADOWFIEND
-//#define NO_SHEAR
+// #define NO_SHADOWFIEND
+// #define NO_SHEAR
 
 enum
 {
@@ -281,8 +281,8 @@ static const DialogueEntry aEventDialogue[] =
     {SAY_ILLIDAN_SPEECH_3,      NPC_ILLIDAN_STORMRAGE,  3000},
     {DUMMY_EMOTE_ID_3,          0,                      4000},
     {SAY_AKAMA_SPEECH_4,        NPC_AKAMA,              4000},
-    {EQUIP_ID_MAIN_HAND,        0,                      1000},
-    {SAY_ILLIDAN_SPEECH_5,      NPC_ILLIDAN_STORMRAGE,  4000},
+    {SAY_ILLIDAN_SPEECH_5,      NPC_ILLIDAN_STORMRAGE,  1000},
+    {EQUIP_ID_MAIN_HAND,        0,                      4000},
     {NPC_ILLIDAN_STORMRAGE,     0,                      0},
     // Akama leaves fight
     {SAY_ILLIDAN_MINION,        NPC_ILLIDAN_STORMRAGE,  8000},
@@ -384,8 +384,8 @@ enum IllidanActions
     ILLIDAN_ACTION_TRANSFORM,
     ILLIDAN_ACTION_TRAP,
     ILLIDAN_ACTION_ENRAGE,
-    ILLIDAN_ACTION_SHADOW_DEMON,
     ILLIDAN_ACTION_FLAME_BURST,
+    ILLIDAN_ACTION_SHADOW_DEMON,
     ILLIDAN_ACTION_SHADOW_BLAST,
     ILLIDAN_ACTION_AGONISING_FLAMES,
     ILLIDAN_ACTION_EYE_BLAST,
@@ -433,9 +433,9 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
         SetDeathPrevention(true);
         if (m_instance)
         {
-            m_creature->GetCombatManager().SetLeashingCheck([](Unit* unit, float /*x*/, float /*y*/, float /*z*/)
+            m_creature->GetCombatManager().SetLeashingCheck([](Unit* unit, float /*x*/, float /*y*/, float z)
             {
-                return static_cast<ScriptedInstance*>(unit->GetInstanceData())->GetPlayerInMap(true, false) == nullptr;
+                return static_cast<ScriptedInstance*>(unit->GetInstanceData())->GetPlayerInMap(true, false) == nullptr || z < 352.0f;
             });
         }
         InitializeDialogueHelper(m_instance);
@@ -455,6 +455,7 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
     uint32 m_phaseTransitionStage;
     uint8 m_curEyeBlastLoc;
     ObjectGuid m_curEyeBlastTarget;
+    uint32 m_flameBlasts;
 
     GuidList m_bladesGuidList;
 
@@ -479,6 +480,7 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
         m_creature->SetImmobilizedState(false);
         SetCombatMovement(true);
         m_creature->SetWalk(false, true);
+        SetCombatScriptStatus(false);
 
         m_creature->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_NPC);
         m_creature->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PLAYER);
@@ -497,7 +499,7 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
             case ILLIDAN_ACTION_ENRAGE: return 40000;
             case ILLIDAN_ACTION_TRAP: return 30000;
             case ILLIDAN_ACTION_SHADOW_DEMON: return 20000;
-            case ILLIDAN_ACTION_FLAME_BURST: return 7500;
+            case ILLIDAN_ACTION_FLAME_BURST: return 7000;
             case ILLIDAN_ACTION_SHADOW_BLAST: return urand(1000, 2000);
             case ILLIDAN_ACTION_AGONISING_FLAMES: return 25000;
             case ILLIDAN_ACTION_EYE_BLAST: return 10000;
@@ -527,6 +529,12 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
     {
         if (m_instance)
             m_instance->SetData(TYPE_ILLIDAN, FAIL);
+    }
+
+    void JustRespawned() override
+    {
+        CombatAI::JustRespawned();
+        DisableDialogue();
     }
 
     void CorpseRemoved(uint32& respawnDelay) override
@@ -805,9 +813,11 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
             {
                 DisableCombatAction(ILLIDAN_ACTION_ENRAGE);
                 DisableCombatAction(ILLIDAN_ACTION_TRAP);
+                // [[fallthrough]]
             }
             case PHASE_3_NORMAL:
             {
+                m_flameBlasts = 0;
                 DoCastSpellIfCan(nullptr, SPELL_DEMON_TRANSFORM_1);
                 m_attackDistance = 80.f;
                 SetCombatScriptStatus(true);
@@ -882,13 +892,12 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
                 ResetCombatAction(ILLIDAN_ACTION_FLAME_BURST, GetInitialActionTimer(ILLIDAN_ACTION_FLAME_BURST));
                 ResetCombatAction(ILLIDAN_ACTION_SHADOW_BLAST, GetInitialActionTimer(ILLIDAN_ACTION_SHADOW_BLAST));
                 ResetCombatAction(ILLIDAN_ACTION_SHADOW_DEMON, GetInitialActionTimer(ILLIDAN_ACTION_SHADOW_DEMON));
-                ResetCombatAction(ILLIDAN_ACTION_TRANSFORM, 53000u);
+                ResetCombatAction(ILLIDAN_ACTION_TRANSFORM, 48000u);
                 break;
             }
             case PHASE_5_MAIEV:
                 ResetCombatAction(ILLIDAN_ACTION_ENRAGE, GetInitialActionTimer(ILLIDAN_ACTION_ENRAGE));
                 ResetCombatAction(ILLIDAN_ACTION_TRAP, GetInitialActionTimer(ILLIDAN_ACTION_TRAP));
-                ResetCombatAction(ILLIDAN_ACTION_TRANSFORM, GetInitialActionTimer(ILLIDAN_ACTION_TRANSFORM));
                 // [fallthrough]
             case PHASE_3_NORMAL:
             {
@@ -1241,6 +1250,9 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
             }
             case ILLIDAN_ACTION_TRANSFORM:
             {
+                if (m_phase == PHASE_4_DEMON && m_flameBlasts < 3)
+                    return;
+
                 HandlePhaseBehaviour(); // Phase 4 transition start
                 return;
             }
@@ -1268,7 +1280,10 @@ struct boss_illidan_stormrageAI : public CombatAI, private DialogueHelper
             case ILLIDAN_ACTION_FLAME_BURST:
             {
                 if (DoCastSpellIfCan(nullptr, SPELL_FLAME_BURST) == CAST_OK)
-                    ResetCombatAction(action, 20000u);
+                {
+                    ResetCombatAction(action, 19500);
+                    ++m_flameBlasts;
+                }
                 return;
             }
             case ILLIDAN_ACTION_SHADOW_BLAST:
@@ -1381,6 +1396,7 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
         });
         AddCustomAction(AKAMA_OUTRO_DELAY, true, [&]()
         {
+            m_creature->SetImmobilizedState(false);
             m_creature->GetMotionMaster()->MoveWaypoint(PATH_ID_AKAMA_BACK_UP);
         });
         AddCustomAction(AKAMA_OUTRO_ACTIONS, true, [&]()
@@ -1389,7 +1405,6 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
         });
         InitializeDialogueHelper(m_instance);
         m_creature->SetNoThreatState(true);
-        Reset();
     }
 
     instance_black_temple* m_instance;
@@ -1402,13 +1417,6 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
     GuidVector m_summons;
 
     uint32 m_outroStage;
-
-    void Reset() override
-    {
-        CombatAI::Reset();
-        m_bFightMinions = false;
-        m_bIsIntroFinished = false;
-    }
 
     void ReceiveAIEvent(AIEventType eventType, Unit* /*sender*/, Unit* /*invoker*/, uint32 /*miscValue*/) override
     {
@@ -1424,7 +1432,7 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
         {
             SetCombatScriptStatus(true);
             m_creature->CombatStop(true);
-            SetReactState(REACT_DEFENSIVE);
+            SetReactState(REACT_PASSIVE);
             m_creature->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_NPC);
             m_creature->GetMotionMaster()->MoveWaypoint(PATH_ID_AKAMA_FIGHT_ILLIDARI);
         }
@@ -1439,6 +1447,9 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
     void JustRespawned() override
     {
         ScriptedAI::JustRespawned();
+        m_creature->SetImmobilizedState(false);
+        m_bFightMinions = false;
+        m_bIsIntroFinished = false;
         SetCombatScriptStatus(false);
         m_creature->RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_NPC);
         SetReactState(REACT_AGGRESSIVE);
@@ -1531,6 +1542,7 @@ struct npc_akama_illidanAI : public CombatAI, private DialogueHelper
                         SetCombatScriptStatus(false);
                         SetReactState(REACT_AGGRESSIVE);
                         m_creature->RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_NPC);
+                        m_creature->SetImmobilizedState(true);
                     }
                     break;
                 }

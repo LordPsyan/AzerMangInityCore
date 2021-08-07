@@ -21,6 +21,7 @@
 #include "Entities/GameObject.h"
 #include "Entities/Player.h"
 #include "Globals/ObjectMgr.h"
+#include "World/World.h"
 
 /**
    Function that adds a player to the players of the affected outdoor pvp zones
@@ -28,6 +29,13 @@
    @param   player to add
    @param   whether zone is main outdoor pvp zone or a affected zone
  */
+void OutdoorPvP::SetGraveYardLinkTeam(uint32 id, uint32 locKey, Team team, std::vector<uint32> mapIds)
+{
+    sWorld.GetMessager().AddMessage([=](World* world) { world->GetGraveyardManager().SetGraveYardLinkTeam(id, locKey, team); });
+    for (uint32 mapId : mapIds)
+        sMapMgr.DoForAllMapsWithMapId(mapId, [=](Map* map) { map->GetMessager().AddMessage([=](Map* map) {map->GetGraveyardManager().SetGraveYardLinkTeam(id, locKey, team); }); });
+}
+
 void OutdoorPvP::HandlePlayerEnterZone(Player* player, bool isMainZone)
 {
     m_zonePlayers[player->GetObjectGuid()] = isMainZone;
